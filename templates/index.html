@@ -1,0 +1,272 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Index
+{% endblock %}
+
+{% block main %}
+  <table>
+    <tbody>
+      <!-- Create the gameboard -->
+      {% for i in range(16) %}
+      <tr>
+        {% for j in range(16) %}
+        <td id="b{{ i * 16 + j }}" onclick="updateTable(this.id)" class="unused"></td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <br>
+  <!-- Deploy all possible messages to footer, waiting to be revealed -->
+  <footer id="ftr" class="bigger text-center text-muted"></footer>
+    <span id="ftr1" class="hidden bigger text-center text-muted">Waiting for opponent to join...</span>
+    <span id="ftr2" class="hidden bigger text-center text-muted">Your turn.</span>
+    <span id="ftr3" class="hidden bigger text-center text-muted">Waiting for opponent's turn...</span>
+    <span id="ftr4" class="hidden bigger text-center text-muted">Opponent would like to play again. <br> <a href='#' onclick='resetTable()'>Request a new game</a></span>
+    <span id="ftr5" class="hidden bigger text-center text-muted">You win! <br> <a href='#' onclick='resetTable()'>Request a new game</a></span>
+    <span id="ftr6" class="hidden bigger text-center text-muted">Opponent would like to play again. <br> <a href='#' onclick='resetTable()'>Request a new game</a></span>
+    <span id="ftr7" class="hidden bigger text-center text-muted">Opponent wins. <br> <a href='#' onclick='resetTable()'>Request a new game</a></span>
+    <span id="ftr8" class="hidden bigger text-center text-muted">Waiting for opponent's response... <br> <a href='#' onclick='resetTable()'>Request a new game</a></span>
+    <span id="ftr9" class="hidden bigger text-center text-muted">Opponent disconnected <br> <a href='#' onclick='forceReset()'>Request a new game</a></span>
+  <script>
+    // Get data from server every 250 milliseconds
+    setInterval(refreshTable, 250);
+
+    // Global variables
+    var turn_index = 1;
+    var reset_needed = false;
+    var p1_id_in_use = false;
+    var p2_id_in_use = false;
+    var current_id = "ftr1";
+    var block_update = false;
+
+    // Clear the gameboard
+    function clearTable() {
+      var i;
+      for (i = 0; i < 256; i++) {
+        var y = document.getElementById("b" + i.toString())
+        y.innerHTML = "";
+        y.setAttribute("class", "unused");
+        y.removeAttribute("style");
+      }
+      block_update = false;
+    }
+
+    // Handle disconnects
+    function forceReset() {
+      $.ajax({
+        type: 'GET',
+        url: '/update?force_reset=true',
+        success: function (resdata) {
+          if (resdata) {
+            clearTable();
+          }
+        }
+      });
+    }
+
+    // Handle messages
+    function message(ftr_index) {
+      document.getElementById(current_id).setAttribute("class", "hidden");
+      document.getElementById(ftr_index).setAttribute("class", "shown bigger text-center text-muted");
+      current_id = document.getElementById(ftr_index).id;
+    }
+
+    // Request reset on next table refresh
+    function resetTable() {
+      reset_needed = true;
+      console.log("ResetTable executed")
+    }
+
+    // Handle UX
+    function refreshTable() {
+      if (reset_needed) {
+        reset_needed = false;
+        $.ajax({
+          type: 'GET',
+          url: '/update?reset={{ playerid }}',
+          success: function (resdata) {
+            console.log({{ playerid }})
+          }
+        });
+      }
+      else {
+        $.ajax({
+          type: 'GET',
+          url: '/update?refresh=true',
+          success: function (resdata) {
+            var x = document.getElementById(resdata.last_move);
+            var footer = document.getElementById("ftr");
+
+            turn_index = resdata.turn_index;
+            p1_id_in_use = resdata.p1_id_in_use;
+            p2_id_in_use = resdata.p2_id_in_use;
+
+            // If player 1 or player 2 disconnects
+            if (resdata.p1_dc || resdata.p2_dc) {
+              message("ftr9");
+              return
+            }
+            // Clear the table in case of stalemate
+            else if (resdata.p1_stalemate && resdata.p2_stalemate) {
+              clearTable();
+            }
+            // Wait until both players are online
+            else if (!p1_id_in_use || !p2_id_in_use) {
+              message("ftr1");
+            }
+            // Current player's turn
+            else if (turn_index == {{ playerid }}) {
+              message("ftr2");
+            }
+            // Opponent's turn
+            else {
+              message("ftr3");
+            }
+
+            // Both players have decided to play again
+            if (resdata.p1_requests_newgame && resdata.p2_requests_newgame) {
+              clearTable();
+            }
+
+            // If at least 1 move has been made
+            if (resdata.last_move) {
+
+              // Reveal opponenent's last move
+              if (x.innerHTML == "") {
+                {% if playerid == 1 %}
+                x.setAttribute("style", "color:red");
+                x.innerHTML = "O";
+                {% endif %}
+
+                {% if playerid == 2 %}
+                x.setAttribute("style", "color:green");
+                x.innerHTML = "X";
+                {% endif %}
+              }
+
+              // If player 1 wins
+              if (resdata.winner == 'P1') {
+                // Highlight win path
+                var i;
+                for (i = 0; i < 5; i++) {
+                  document.getElementById(resdata.winlist[i]).setAttribute("style", "background-color:rgba(0, 255, 0, 0.5");
+                }
+                // Block input
+                block_update = true;
+                // Handle messages for different scenarios
+                if ({{ playerid }} == 1) {
+                  if (resdata.p1_requests_newgame) {
+                    message("ftr8");
+                  }
+                  else if (resdata.p2_requests_newgame) {
+                    message("ftr4");
+                  }
+                  else {
+                    message("ftr5");
+                  }
+                }
+                else {
+                  if (resdata.p1_requests_newgame) {
+                    message("ftr6");
+                  }
+                  else if (resdata.p2_requests_newgame) {
+                    message("ftr8");
+                  }
+                  else {
+                    message("ftr7");
+                  }
+                }
+              }
+
+              // If player 2 wins
+              if (resdata.winner == 'P2') {
+                // Highlight the win path
+                var i;
+                for (i = 0; i < 5; i++) {
+                  document.getElementById(resdata.winlist[i]).setAttribute("style", "background-color:rgba(255, 0, 0, 0.5");
+                }
+                // Block input
+                block_update = true;
+                // Handle messages for different scenarios
+                if ({{ playerid }} == 2) {
+                  if (resdata.p2_requests_newgame) {
+                    message("ftr8");
+                  }
+                  else if (resdata.p1_requests_newgame) {
+                    message("ftr6");
+                  }
+                  else {
+                    message("ftr5");
+                  }
+                }
+                else {
+                  if (resdata.p2_requests_newgame) {
+                    message("ftr4");
+                  }
+                  else if (resdata.p1_requests_newgame) {
+                    message("ftr8");
+                  }
+                  else {
+                    message("ftr7");
+                  }
+                }
+              }
+              // Remove the unused class from last move, making the cursor non-interactive when hovered over
+              x.removeAttribute("class");
+            }
+          }
+        });
+      }
+    }
+
+    // Sends an update to the server if current player's turn and valid move has been made
+    function updateTable(id) {
+      if (block_update) {
+        return "Input blocked until new game has been started";
+      }
+
+      if (turn_index != {{ playerid }}) {
+        return "Not your turn";
+      }
+
+      if (!p1_id_in_use) {
+        return "Player 1 hasn't joined yet";
+      }
+
+      if (!p2_id_in_use) {
+        return "Player 2 hasn't joined yet";
+      }
+
+      var x = document.getElementById(id);
+
+      // Use "X" for player 1, "O" for player 2
+      {% if playerid == 1 %}
+      if (!x.innerHTML) {
+        x.setAttribute("style", "color:green");
+        x.innerHTML = "X";
+      }
+      {% endif %}
+
+      {% if playerid == 2 %}
+      if (!x.innerHTML) {
+        x.setAttribute("style", "color:red");
+        x.innerHTML = "O";
+      }
+      {% endif %}
+
+      // Handle cursor
+      x.removeAttribute("class");
+      console.log(x.id);
+
+      // Tell the server which block was pressed
+      $.ajax({
+        type: 'GET',
+        url: '/update?td=' + x.id,
+        success: function (resdata) {
+        }
+      });
+    }
+  </script>
+{% endblock %}
